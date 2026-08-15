@@ -1105,6 +1105,7 @@ function startTTS() {
         });
 }
 
+
 // ★★★ 播放队列中的下一段（使用 fetch 下载再播放）★★★
 let activePlayPromise = null;  // 用于防止并发
 
@@ -1132,7 +1133,7 @@ function playNextInQueue() {
     const item = ttsState.queue[0];
     const url = item.url;
     const index = item.index;
-    const sentence = item.sentence;   // ★ 取出句子文本
+    const sentence = item.sentence;
     console.log(`🎶 播放下一段 (索引 ${index}): ${url}`);
     ttsState.isPlaying = true;
 
@@ -1160,7 +1161,12 @@ function playNextInQueue() {
             const audio = new Audio(blobUrl);
             ttsState.audioElement = audio;
 
-            // 只绑定一次事件，使用 once 选项或立即置空
+            // ★★★ 应用播放速度 ★★★
+            const speedSlider = document.getElementById('ttsSpeed');
+            const speed = parseFloat(speedSlider ? speedSlider.value : 1.0) || 1.0;
+            audio.playbackRate = speed;
+
+            // 只绑定一次事件
             let endedHandled = false;
             let errorHandled = false;
 
@@ -1194,7 +1200,6 @@ function playNextInQueue() {
                 URL.revokeObjectURL(blobUrl);
                 ttsState.isPlaying = false;
                 activePlayPromise = null;
-                // 重试
                 retryPlay(url, index);
             };
 
@@ -1218,7 +1223,6 @@ function playNextInQueue() {
             retryPlay(url, index);
         });
 }
-
 // 重试播放函数（使用原始 URL 和索引）
 let retryCount = {};
 
@@ -1297,6 +1301,24 @@ function stopTTS(silent = false) {
 function toggleTTS() {
     toggleTTSPlayback();
 }
+
+// 速度滑块实时控制
+document.addEventListener('DOMContentLoaded', function() {
+    const speedSlider = document.getElementById('ttsSpeed');
+    const speedLabel = document.getElementById('ttsSpeedLabel');
+    if (speedSlider && speedLabel) {
+        // 初始化显示
+        speedLabel.textContent = parseFloat(speedSlider.value).toFixed(1) + 'x';
+        // 实时调整速度
+        speedSlider.addEventListener('input', function() {
+            const val = parseFloat(this.value).toFixed(1);
+            speedLabel.textContent = val + 'x';
+            if (ttsState.audioElement && !ttsState.audioElement.paused) {
+                ttsState.audioElement.playbackRate = parseFloat(val);
+            }
+        });
+    }
+});
 
 // ---------- 初始化 ----------
 initFilterUI();

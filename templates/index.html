@@ -42,6 +42,9 @@
             <div class="tts-controls" style="display:flex; align-items:center; gap:6px; margin-left:auto;">
                 <button id="ttsPlayBtn" onclick="toggleTTSPlayback()" title="朗读本章" style="background:none; border:1px solid var(--border); border-radius:6px; padding:4px 10px; cursor:pointer; font-size:1.1rem; color:var(--text); transition:background 0.2s;">🔊</button>
                 <button onclick="stopTTS()" title="停止朗读" style="background:none; border:1px solid var(--border); border-radius:6px; padding:4px 8px; cursor:pointer; font-size:0.9rem; color:var(--text); transition:background 0.2s;">⏹</button>
+                <!-- ★★★ 新增速度控制 ★★★ -->
+                <input type="range" id="ttsSpeed" min="0.5" max="4.0" step="0.1" value="1.0" style="width:80px; accent-color:var(--link);" title="播放速度">
+                <span id="ttsSpeedLabel" style="font-size:0.75rem; opacity:0.7; min-width:30px;">1.0x</span>
             </div>
         </div>
 
