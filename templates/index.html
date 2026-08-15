@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <link rel="icon" type="image/png" href="/static/favicon.png">
+    <title>小说阅读</title>
+    <!-- ★ 加载 marked 解析库 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- ★ 修改静态资源路径为 /static/ -->
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="sidebar" id="sidebar">
+    <h3>
+        📁 目录
+        <span class="header-actions">
+            <!-- ★ 新增：侧边栏折叠按钮 -->
+            <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" title="折叠/展开侧边栏">⛶</button>
+            <button class="random-toggle" onclick="goRandom()" title="随机阅读">🎲</button>
+            <button class="filter-toggle" onclick="openFilterModal()" title="筛选作者/标签">🔍</button>
+            <button class="theme-toggle" onclick="toggleTheme()">🌙</button>
+        </span>
+    </h3>
+    <div class="search-box">
+        <input type="text" id="searchInput" placeholder="搜索全部章节..." />
+        <button onclick="doSearch()">🔍</button>
+    </div>
+    <div class="search-results" id="searchResults"></div>
+    <div class="file-tree" id="file-tree"></div>
+    <div class="status-bar" id="statusBar">就绪</div>
+    <!-- ★ 删除原来的 sidebar-resizer，挪到外面 -->
+</div>
+
+<!-- ★ 拖动条独立放置在侧边栏和内容区之间 -->
+<div class="sidebar-resizer" id="sidebarResizer"></div>
+
+<div class="content">
+    <div id="progress-bar"><div id="progress-fill" style="width:0%;"></div></div>
+    <div class="content-inner">
+        <h2 id="file-title">📖 选择左侧文件预览</h2>
+
+        <!-- 元数据栏 -->
+        <div id="meta-bar" style="display:none; padding: 10px 0 16px 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; font-size: 0.95rem; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
+            <span id="meta-author" style="font-weight:600;">作者：<span id="author-name" style="font-weight:400; cursor:pointer; color:var(--link);" onclick="filterByAuthor()"></span></span>
+            <span style="color:var(--border);">|</span>
+            <span id="meta-tags" style="font-weight:600;">标签：</span>
+            <span id="tags-container" style="display:inline-flex; flex-wrap:wrap; gap:6px;"></span>
+        </div>
+
+        <div id="markdown-content" class="md-preview"><p style="opacity:0.6;">选择 Markdown 文件查看渲染效果</p></div>
+
+        <!-- 底部完成按钮 -->
+        <div class="completion-bar" id="completion-bar" style="display:none;">
+            <button class="btn-complete" id="btn-complete" onclick="toggleCompletion()">标记为完成</button>
+        </div>
+
+        <!-- 相似推荐区域 -->
+        <div id="recommendations-container" style="display:none;">
+            <div class="rec-title">📚 相似推荐（基于标签）</div>
+            <div class="rec-list" id="recommendations-list"></div>
+        </div>
+
+    </div>
+</div>
+
+<!-- 筛选模态框 -->
+<div class="modal-overlay" id="filterModal">
+    <div class="modal">
+        <h2>📌 筛选文章</h2>
+        <div class="filter-row">
+            <label>作者</label>
+            <select id="authorFilter"></select>
+        </div>
+        <div class="filter-row">
+            <label>标签</label>
+            <div class="tag-group" id="tagFilters"></div>
+        </div>
+        <div class="modal-actions">
+            <button class="btn-reset" onclick="resetFilters()">重置</button>
+            <button class="btn-apply" onclick="applyFiltersAndClose()">应用</button>
+            <button class="btn-close" onclick="closeFilterModal()">关闭</button>
+        </div>
+    </div>
+</div>
+
+<!-- ===== 后端注入数据（必须保留在 HTML 中） ===== -->
+<script>
+    // 这些变量由 Python 后端动态替换，必须放在 HTML 中
+    const allMeta = {{META_JSON}};
+    const allAuthors = {{AUTHORS_JSON}};
+    const allTags = {{TAGS_JSON}};
+    const ILLU_RAW = "{{ILLU_ABS_PATH}}";
+    const ILLU_ENCODED = ILLU_RAW.split('/').map(part => encodeURIComponent(part)).join('/');
+    const readProgressInitial = {{READ_PROGRESS_JSON}};
+    let readProgress = readProgressInitial || {};
+</script>
+
+<!-- ★ 引用外部 JavaScript（所有功能函数），路径改为 /static/ -->
+<script src="/static/app.js"></script>
+</body>
+</html>
