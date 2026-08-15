@@ -977,6 +977,8 @@ let ttsState = {
     abortController: null,
     audioElement: null,
     sentences: [],      // 存储所有句子文本
+    preloadedAudioBuffer: null,   // 预加载的音频 ArrayBuffer
+    preloadedAudioUrl: null,      // 对应的 URL，用于校验
 };
 
 function getCurrentText() {
@@ -1087,7 +1089,24 @@ function toggleTTSPlayback() {
 
 function startTTS() {
     console.log('🚀 startTTS 开始');
-    const text = getCurrentText();
+    // 获取当前渲染内容的纯文本
+    let text = getCurrentText();
+
+    // ★★★ 过滤元数据行（作者和标签） ★★★
+    // 按行分割，过滤掉以 "- 作者：" 或 "- 标签：" 开头的行
+    const lines = text.split('\n');
+    const filteredLines = lines.filter(line => {
+        const trimmed = line.trim();
+        // 匹配行首为 "- 作者：" 或 "- 标签："（允许全角/半角冒号）
+        if (/^-\s*作者\s*[:：]/.test(trimmed)) return false;
+        if (/^-\s*标签\s*[:：]/.test(trimmed)) return false;
+        // 可选：支持英文格式
+        if (/^-\s*Author\s*[:：]/.test(trimmed)) return false;
+        if (/^-\s*Tags\s*[:：]/.test(trimmed)) return false;
+        return true;
+    });
+    text = filteredLines.join('\n');
+
     if (!text || text.trim().length === 0) {
         alert('当前章节没有可朗读的文本');
         return;
@@ -1152,7 +1171,6 @@ function startTTS() {
                                     if (btn) {
                                         btn.textContent = ttsState.queue.length > 0 ? '⏸️' : '🔊';
                                     }
-                                    // 如果队列有内容且未播放，开始播放
                                     if (ttsState.queue.length > 0 && !ttsState.isPlaying) {
                                         playNextInQueue();
                                     }
@@ -1162,12 +1180,10 @@ function startTTS() {
                                     ttsState.isGenerating = false;
                                     const btn = document.getElementById('ttsPlayBtn');
                                     if (btn) btn.textContent = '🔊';
-                               } else if (data.url) {
+                                } else if (data.url) {
                                     console.log('🎵 收到音频 URL:', data.url);
-                                    // 检查队列中是否已有该 URL（避免重复）
                                     const exists = ttsState.queue.some(item => item.url === data.url);
                                     if (!exists) {
-                                        // ★★★ 保存 sentence 到队列中 ★★★
                                         ttsState.queue.push({url: data.url, index: data.index, sentence: data.sentence});
                                         if (!ttsState.isPlaying && !activePlayPromise) {
                                             console.log('▶️ 触发播放（队列长度:', ttsState.queue.length, '）');
@@ -1249,25 +1265,35 @@ function playNextInQueue() {
 
     highlightSentence(sentence);
 
-    // 使用 fetch 下载音频
-    activePlayPromise = fetch(url, { cache: 'no-store' })
-        .then(response => {
+    // 优先使用预加载的音频缓存（如果匹配）
+    const usePreloaded = (ttsState.preloadedAudioUrl === url && ttsState.preloadedAudioBuffer);
+    const getArrayBuffer = () => {
+        if (usePreloaded) {
+            // 使用已缓存的 ArrayBuffer
+            const buf = ttsState.preloadedAudioBuffer;
+            // 清理缓存，避免复用
+            ttsState.preloadedAudioBuffer = null;
+            ttsState.preloadedAudioUrl = null;
+            return Promise.resolve(buf);
+        }
+        return fetch(url, { cache: 'no-store' }).then(response => {
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            console.log('📥 音频数据下载成功');
             return response.arrayBuffer();
-        })
+        });
+    };
+
+    activePlayPromise = getArrayBuffer()
         .then(arrayBuffer => {
             const blob = new Blob([arrayBuffer], { type: 'audio/wav' });
             const blobUrl = URL.createObjectURL(blob);
             const audio = new Audio(blobUrl);
             ttsState.audioElement = audio;
 
-            // ★★★ 应用播放速度 ★★★
+            // 应用播放速度
             const speedSlider = document.getElementById('ttsSpeed');
             const speed = parseFloat(speedSlider ? speedSlider.value : 1.0) || 1.0;
             audio.playbackRate = speed;
 
-            // 只绑定一次事件
             let endedHandled = false;
             let errorHandled = false;
 
@@ -1308,6 +1334,23 @@ function playNextInQueue() {
                 console.log('✅ 播放已开始');
                 const btn = document.getElementById('ttsPlayBtn');
                 if (btn) btn.textContent = '⏸️';
+
+                // 播放开始后异步预加载下一段（如果存在）
+                try {
+                    if (ttsState.queue.length > 1) {
+                        const nextItem = ttsState.queue[1];
+                        if (nextItem && nextItem.url && ttsState.preloadedAudioUrl !== nextItem.url) {
+                            fetch(nextItem.url, { cache: 'no-store' })
+                                .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
+                                .then(buf => {
+                                    ttsState.preloadedAudioBuffer = buf;
+                                    ttsState.preloadedAudioUrl = nextItem.url;
+                                })
+                                .catch(() => {});
+                        }
+                    }
+                } catch (e) { }
+
             }).catch(err => {
                 if (errorHandled) return;
                 errorHandled = true;
@@ -1389,6 +1432,9 @@ function stopTTS(silent = false) {
     ttsState.isPlaying = false;
     ttsState.queue = [];
     ttsState.sentences = [];
+    // 清理预加载音频缓存
+    ttsState.preloadedAudioBuffer = null;
+    ttsState.preloadedAudioUrl = null;
     retryCount = {};
     activePlayPromise = null;  // 新增
     clearHighlight();

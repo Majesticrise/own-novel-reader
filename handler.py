@@ -166,8 +166,24 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('X-Accel-Buffering', 'no')
             self.end_headers()
 
+            # 过滤元数据行（如 - 作者：xxx，- 标签：xxx 等），然后分割句子
+            lines = text.splitlines()
+            filtered_lines = []
+            for line in lines:
+                stripped = line.strip()
+                # 过滤以 '- 作者' 或 '- 标签' 开头的行（不区分全角半角冒号）
+                if re.match(r'^-\s*作者\s*[:：]', stripped):
+                    continue
+                if re.match(r'^-\s*标签\s*[:：]', stripped):
+                    continue
+                if re.match(r'^-\s*Author\s*[:：]', stripped):
+                    continue
+                if re.match(r'^-\s*Tags\s*[:：]', stripped):
+                    continue
+                filtered_lines.append(line)
+            filtered_text = '\n'.join(filtered_lines)
             # 分割句子
-            sentences = re.split(r'(?<=[。！？\n])', text)
+            sentences = re.split(r'(?<=[。！？\n])', filtered_text)
             sentences = [s.strip() for s in sentences if s.strip()]
             total = len(sentences)
             if total == 0:
