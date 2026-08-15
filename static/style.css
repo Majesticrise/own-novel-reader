@@ -316,3 +316,14 @@ body { font-family: system-ui, sans-serif; background: var(--bg); color: var(--t
 }
 * { scrollbar-width: thin; scrollbar-color: rgba(0,0,0,0.2) transparent; }
 .dark * { scrollbar-color: rgba(255,255,255,0.2) transparent; }
+.tts-highlight {
+    background-color: #ffeb3b;
+    color: #000;
+    padding: 0 2px;
+    border-radius: 2px;
+    transition: background-color 0.2s;
+}
+.dark .tts-highlight {
+    background-color: #f59e0b;
+    color: #1e293b;
+}
