@@ -14,8 +14,7 @@
     <h3>
         📁 目录
         <span class="header-actions">
-            <!-- ★ 新增：侧边栏折叠按钮 -->
-            <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()" title="折叠/展开侧边栏">⛶</button>
+            <!-- ★ 移除了折叠按钮，只保留随机、筛选、主题 -->
             <button class="random-toggle" onclick="goRandom()" title="随机阅读">🎲</button>
             <button class="filter-toggle" onclick="openFilterModal()" title="筛选作者/标签">🔍</button>
             <button class="theme-toggle" onclick="toggleTheme()">🌙</button>
@@ -28,7 +27,6 @@
     <div class="search-results" id="searchResults"></div>
     <div class="file-tree" id="file-tree"></div>
     <div class="status-bar" id="statusBar">就绪</div>
-    <!-- ★ 删除原来的 sidebar-resizer，挪到外面 -->
 </div>
 
 <!-- ★ 拖动条独立放置在侧边栏和内容区之间 -->
@@ -37,7 +35,11 @@
 <div class="content">
     <div id="progress-bar"><div id="progress-fill" style="width:0%;"></div></div>
     <div class="content-inner">
-        <h2 id="file-title">📖 选择左侧文件预览</h2>
+        <!-- ★ 新增：内容区顶部标题栏，包含折叠按钮和文章标题 -->
+        <div class="content-header">
+            <button id="sidebarToggle" onclick="toggleSidebar()" title="折叠/展开侧边栏">⛶</button>
+            <h2 id="file-title">📖 选择左侧文件预览</h2>
+        </div>
 
         <!-- 元数据栏 -->
         <div id="meta-bar" style="display:none; padding: 10px 0 16px 0; border-bottom: 1px solid var(--border); margin-bottom: 16px; font-size: 0.95rem; display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
