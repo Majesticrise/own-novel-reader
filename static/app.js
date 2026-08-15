@@ -884,17 +884,45 @@ function getCurrentText() {
 }
 
 // 高亮指定索引的句子
-function highlightSentence(index) {
-    clearHighlight(); // 先清除之前的高亮
+function highlightSentence(sentenceText) {
+    // 清除之前的高亮
+    clearHighlight();
+    if (!sentenceText) return;
+
     const contentDiv = document.getElementById('markdown-content');
     if (!contentDiv) return;
-    const sentences = ttsState.sentences;
-    if (index < 0 || index >= sentences.length) return;
-    const sentenceText = sentences[index];
-    // 在 contentDiv 的文本中查找该句子
-    const text = contentDiv.textContent;
-    const start = text.indexOf(sentenceText);
-    if (start === -1) return;
+
+    // 获取纯文本内容
+    const fullText = contentDiv.textContent;
+    // 尝试精确匹配
+    let start = fullText.indexOf(sentenceText);
+    if (start === -1) {
+        // 尝试去除首尾空白
+        const trimmed = sentenceText.trim();
+        if (trimmed !== sentenceText) {
+            start = fullText.indexOf(trimmed);
+            if (start !== -1) {
+                sentenceText = trimmed;
+            }
+        }
+        // 如果还找不到，尝试去除换行符（跨行匹配）
+        if (start === -1) {
+            const noNewline = sentenceText.replace(/\s+/g, ' ');
+            const fullNoNewline = fullText.replace(/\s+/g, ' ');
+            start = fullNoNewline.indexOf(noNewline);
+            if (start !== -1) {
+                // 无法精准定位，直接返回（或使用近似匹配）
+                console.warn('⚠️ 无法精确高亮，近似匹配可能不准确');
+                return;
+            }
+        }
+    }
+    if (start === -1) {
+        console.warn('⚠️ 未找到句子:', sentenceText);
+        return;
+    }
+
+    // 使用 TreeWalker 遍历文本节点并高亮
     const walker = document.createTreeWalker(
         contentDiv,
         NodeFilter.SHOW_TEXT,
@@ -903,13 +931,14 @@ function highlightSentence(index) {
     );
     let node;
     let charIndex = 0;
+    const len = sentenceText.length;
     while (node = walker.nextNode()) {
         const nodeText = node.textContent;
         const nextCharIndex = charIndex + nodeText.length;
         if (start >= charIndex && start < nextCharIndex) {
-            // 这个节点包含目标文本的起始位置
             const offset = start - charIndex;
-            const end = Math.min(offset + sentenceText.length, nodeText.length);
+            const end = Math.min(offset + len, nodeText.length);
+            // 截取片段
             const range = document.createRange();
             range.setStart(node, offset);
             range.setEnd(node, end);
@@ -967,9 +996,6 @@ function startTTS() {
 
     stopTTS(true);
 
-    // 分割句子（与后端保持一致）
-    const sentences = text.match(/[^。！？\n]+[。！？\n]?/g) || [];
-    ttsState.sentences = sentences.map(s => s.trim()).filter(s => s.length > 0);
     ttsState.queue = [];
     ttsState.currentIndex = 0;
     ttsState.isPlaying = false;
@@ -1041,7 +1067,8 @@ function startTTS() {
                                     // 检查队列中是否已有该 URL（避免重复）
                                     const exists = ttsState.queue.some(item => item.url === data.url);
                                     if (!exists) {
-                                        ttsState.queue.push({url: data.url, index: data.index});
+                                        // ★★★ 保存 sentence 到队列中 ★★★
+                                        ttsState.queue.push({url: data.url, index: data.index, sentence: data.sentence});
                                         if (!ttsState.isPlaying && !activePlayPromise) {
                                             console.log('▶️ 触发播放（队列长度:', ttsState.queue.length, '）');
                                             playNextInQueue();
@@ -1106,6 +1133,7 @@ function playNextInQueue() {
     const item = ttsState.queue[0];
     const url = item.url;
     const index = item.index;
+    const sentence = item.sentence;   // ★ 取出句子文本
     console.log(`🎶 播放下一段 (索引 ${index}): ${url}`);
     ttsState.isPlaying = true;
 
@@ -1118,7 +1146,7 @@ function playNextInQueue() {
         ttsState.audioElement = null;
     }
 
-    highlightSentence(index);
+    highlightSentence(sentence);
 
     // 使用 fetch 下载音频
     activePlayPromise = fetch(url, { cache: 'no-store' })
