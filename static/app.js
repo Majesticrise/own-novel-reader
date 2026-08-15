@@ -1097,12 +1097,14 @@ function startTTS() {
     const lines = text.split('\n');
     const filteredLines = lines.filter(line => {
         const trimmed = line.trim();
-        // 匹配行首为 "- 作者：" 或 "- 标签："（允许全角/半角冒号）
+        // 只要行首（去除空格后）以“作者”或“标签”开头，且后跟冒号（全角/半角），就过滤掉
+        if (/^作者\s*[:：]/.test(trimmed)) return false;
+        if (/^标签\s*[:：]/.test(trimmed)) return false;
+        if (/^Author\s*[:：]/.test(trimmed)) return false;
+        if (/^Tags\s*[:：]/.test(trimmed)) return false;
+        // 如果行以 "- " 开头，但后面跟着作者或标签，也过滤（兼容 `- 作者：` 格式）
         if (/^-\s*作者\s*[:：]/.test(trimmed)) return false;
         if (/^-\s*标签\s*[:：]/.test(trimmed)) return false;
-        // 可选：支持英文格式
-        if (/^-\s*Author\s*[:：]/.test(trimmed)) return false;
-        if (/^-\s*Tags\s*[:：]/.test(trimmed)) return false;
         return true;
     });
     text = filteredLines.join('\n');
