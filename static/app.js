@@ -4,6 +4,11 @@ let currentFile = null;
 let currentFilteredPaths = [];
 let folderCounter = 0;
 let expandedFolders = [];
+// 预加载缓存（下一章与上一章）
+let preloadedNextPath = null;
+let preloadedNextContent = null;
+let preloadedPrevPath = null;
+let preloadedPrevContent = null;
 
 
 // ---------- 进度条显示 ----------
@@ -156,6 +161,64 @@ function buildDirMap() {
 }
 const dirMap = buildDirMap();
 
+// ---------- 预加载下一章/上一章 ----------
+function preloadNextChapter(currentPath) {
+    try {
+        const lastSlash = currentPath.lastIndexOf('/');
+        const dir = lastSlash === -1 ? '' : currentPath.substring(0, lastSlash);
+        const list = dirMap[dir] || [];
+        if (list.length === 0) return;
+        const idx = list.indexOf(currentPath);
+        if (idx === -1) return;
+        const nextIdx = idx + 1;
+        if (nextIdx >= list.length) return; // 已是最后一章
+        const nextPath = list[nextIdx];
+        if (!nextPath) return;
+        if (preloadedNextPath === nextPath) return; // 已预加载
+        // 发起静默请求
+        fetch('/' + nextPath)
+            .then(res => {
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return res.text();
+            })
+            .then(text => {
+                preloadedNextPath = nextPath;
+                preloadedNextContent = text;
+            })
+            .catch(() => {
+                // 静默忽略网络错误
+            });
+    } catch (e) {
+        // 忽略任何错误
+    }
+}
+
+function preloadPrevChapter(currentPath) {
+    try {
+        const lastSlash = currentPath.lastIndexOf('/');
+        const dir = lastSlash === -1 ? '' : currentPath.substring(0, lastSlash);
+        const list = dirMap[dir] || [];
+        if (list.length === 0) return;
+        const idx = list.indexOf(currentPath);
+        if (idx === -1) return;
+        const prevIdx = idx - 1;
+        if (prevIdx < 0) return; // 已是第一章
+        const prevPath = list[prevIdx];
+        if (!prevPath) return;
+        if (preloadedPrevPath === prevPath) return; // 已预加载
+        fetch('/' + prevPath)
+            .then(res => {
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                return res.text();
+            })
+            .then(text => {
+                preloadedPrevPath = prevPath;
+                preloadedPrevContent = text;
+            })
+            .catch(() => {});
+    } catch (e) {}
+}
+
 // ---------- 切换文章 ----------
 function switchFile(delta) {
     if (!currentFile) return;
@@ -181,8 +244,13 @@ function switchFile(delta) {
         }
     }
     if (targetElement) {
+        // 手动切换时清理预加载缓存，防止旧缓存干扰
+        preloadedNextPath = null; preloadedNextContent = null;
+        preloadedPrevPath = null; preloadedPrevContent = null;
         loadFile(newPath, targetElement);
     } else {
+        preloadedNextPath = null; preloadedNextContent = null;
+        preloadedPrevPath = null; preloadedPrevContent = null;
         loadFile(newPath, null);
     }
 }
@@ -598,6 +666,31 @@ function loadFile(path, element) {
     const progress = readProgress[path] || 0;
     updateCompleteButton(progress);
 
+    // 首先检查是否命中预加载缓存
+    if (preloadedNextPath === path && preloadedNextContent) {
+        const text = preloadedNextContent;
+        // 使用缓存内容渲染
+        contentDiv.innerHTML = marked.parse(text);
+        document.getElementById('statusBar').textContent = `当前阅读：${path}`;
+        saveState({ file: path });
+        // 清空缓存（已使用）
+        preloadedNextPath = null; preloadedNextContent = null;
+
+        // 复用原有渲染后逻辑
+        _afterLoadRender(path, text);
+        return;
+    }
+    if (preloadedPrevPath === path && preloadedPrevContent) {
+        const text = preloadedPrevContent;
+        contentDiv.innerHTML = marked.parse(text);
+        document.getElementById('statusBar').textContent = `当前阅读：${path}`;
+        saveState({ file: path });
+        preloadedPrevPath = null; preloadedPrevContent = null;
+        _afterLoadRender(path, text);
+        return;
+    }
+
+    // 未命中缓存则走网络请求
     fetch('/' + path)
         .then(res => {
             if (!res.ok) throw new Error(`HTTP ${res.status} - ${res.statusText}`);
@@ -607,20 +700,29 @@ function loadFile(path, element) {
             contentDiv.innerHTML = marked.parse(text);
             document.getElementById('statusBar').textContent = `当前阅读：${path}`;
             saveState({ file: path });
+            _afterLoadRender(path, text);
+        })
+        .catch(err => {
+            contentDiv.innerHTML = `<p class="error">❌ 读取失败: ${err.message}</p>`;
+            document.getElementById('statusBar').textContent = '加载失败';
+        });
+}
 
-            const metaBar = document.getElementById('meta-bar');
-            const authorName = document.getElementById('author-name');
-            const tagsContainer = document.getElementById('tags-container');
-            const meta = allMeta.find(item => item.path === path);
-            if (meta && (meta.author || (meta.tags && meta.tags.length > 0))) {
-                metaBar.style.display = 'flex';
-                authorName.textContent = meta.author || '未知';
-                tagsContainer.innerHTML = '';
-                if (meta.tags && meta.tags.length > 0) {
-                    meta.tags.forEach(tag => {
-                        const tagBtn = document.createElement('span');
-                        tagBtn.textContent = tag;
-                        tagBtn.style.cssText = `
+// 将原有渲染完成后的逻辑提取为函数，便于复用（缓存命中或网络读入后调用）
+function _afterLoadRender(path, text) {
+    const metaBar = document.getElementById('meta-bar');
+    const authorName = document.getElementById('author-name');
+    const tagsContainer = document.getElementById('tags-container');
+    const meta = allMeta.find(item => item.path === path);
+    if (meta && (meta.author || (meta.tags && meta.tags.length > 0))) {
+        metaBar.style.display = 'flex';
+        authorName.textContent = meta.author || '未知';
+        tagsContainer.innerHTML = '';
+        if (meta.tags && meta.tags.length > 0) {
+            meta.tags.forEach(tag => {
+                const tagBtn = document.createElement('span');
+                tagBtn.textContent = tag;
+                tagBtn.style.cssText = `
                             display: inline-block;
                             padding: 2px 12px;
                             border-radius: 12px;
@@ -632,59 +734,58 @@ function loadFile(path, element) {
                             transition: all 0.2s;
                             user-select: none;
                         `;
-                        tagBtn.onmouseenter = function() {
-                            this.style.background = 'var(--link)';
-                            this.style.color = 'white';
-                            this.style.borderColor = 'var(--link)';
-                        };
-                        tagBtn.onmouseleave = function() {
-                            this.style.background = 'var(--search-bg)';
-                            this.style.color = 'var(--text)';
-                            this.style.borderColor = 'var(--search-border)';
-                        };
-                        tagBtn.onclick = function(e) {
-                            e.stopPropagation();
-                            filterByTag(tag);
-                        };
-                        tagsContainer.appendChild(tagBtn);
-                    });
-                } else {
-                    tagsContainer.innerHTML = '<span style="opacity:0.6;">无</span>';
-                }
-            } else {
-                metaBar.style.display = 'none';
-            }
+                tagBtn.onmouseenter = function() {
+                    this.style.background = 'var(--link)';
+                    this.style.color = 'white';
+                    this.style.borderColor = 'var(--link)';
+                };
+                tagBtn.onmouseleave = function() {
+                    this.style.background = 'var(--search-bg)';
+                    this.style.color = 'var(--text)';
+                    this.style.borderColor = 'var(--search-border)';
+                };
+                tagBtn.onclick = function(e) {
+                    e.stopPropagation();
+                    filterByTag(tag);
+                };
+                tagsContainer.appendChild(tagBtn);
+            });
+        } else {
+            tagsContainer.innerHTML = '<span style="opacity:0.6;">无</span>';
+        }
+    } else {
+        metaBar.style.display = 'none';
+    }
 
-            const content = document.querySelector('.content');
-            if (appState.scroll_positions && appState.scroll_positions[path] !== undefined) {
-                content.scrollTop = appState.scroll_positions[path];
-                setTimeout(() => {
-                    updateProgressBar();
-                    const currentP = readProgress[path] || 0;
-                    if (currentP === 0 && content.scrollTop > 0) {
-                        const sh = content.scrollHeight - content.clientHeight;
-                        if (sh > 0) {
-                            const p = Math.round((content.scrollTop / sh) * 100);
-                            if (p > 0) {
-                                readProgress[path] = p;
-                                updateFileItemProgress(path, p);
-                                updateCompleteButton(p);
-                                saveReadProgress(path, p);
-                            }
-                        }
+    const content = document.querySelector('.content');
+    if (appState.scroll_positions && appState.scroll_positions[path] !== undefined) {
+        content.scrollTop = appState.scroll_positions[path];
+        setTimeout(() => {
+            updateProgressBar();
+            const currentP = readProgress[path] || 0;
+            if (currentP === 0 && content.scrollTop > 0) {
+                const sh = content.scrollHeight - content.clientHeight;
+                if (sh > 0) {
+                    const p = Math.round((content.scrollTop / sh) * 100);
+                    if (p > 0) {
+                        readProgress[path] = p;
+                        updateFileItemProgress(path, p);
+                        updateCompleteButton(p);
+                        saveReadProgress(path, p);
                     }
-                }, 50);
-            } else {
-                content.scrollTop = 0;
-                updateProgressBar();
+                }
             }
-            updateFileItemProgress(path, readProgress[path] || 0);
-            renderRecommendations(path);
-        })
-        .catch(err => {
-            contentDiv.innerHTML = `<p class="error">❌ 读取失败: ${err.message}</p>`;
-            document.getElementById('statusBar').textContent = '加载失败';
-        });
+        }, 50);
+    } else {
+        content.scrollTop = 0;
+        updateProgressBar();
+    }
+    updateFileItemProgress(path, readProgress[path] || 0);
+    renderRecommendations(path);
+
+    // 渲染完成后触发预加载下一章与前一章
+    preloadNextChapter(path);
+    preloadPrevChapter(path);
 }
 
 // ---------- 保存状态（通用） ----------
