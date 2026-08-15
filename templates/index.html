@@ -35,10 +35,14 @@
 <div class="content">
     <div id="progress-bar"><div id="progress-fill" style="width:0%;"></div></div>
     <div class="content-inner">
-        <!-- ★ 新增：内容区顶部标题栏，包含折叠按钮和文章标题 -->
         <div class="content-header">
             <button id="sidebarToggle" onclick="toggleSidebar()" title="折叠/展开侧边栏">⛶</button>
             <h2 id="file-title">📖 选择左侧文件预览</h2>
+            <!-- ★★★ 新增 TTS 控制 ★★★ -->
+            <div class="tts-controls" style="display:flex; align-items:center; gap:6px; margin-left:auto;">
+                <button id="ttsPlayBtn" onclick="toggleTTSPlayback()" title="朗读本章" style="background:none; border:1px solid var(--border); border-radius:6px; padding:4px 10px; cursor:pointer; font-size:1.1rem; color:var(--text); transition:background 0.2s;">🔊</button>
+                <button onclick="stopTTS()" title="停止朗读" style="background:none; border:1px solid var(--border); border-radius:6px; padding:4px 8px; cursor:pointer; font-size:0.9rem; color:var(--text); transition:background 0.2s;">⏹</button>
+            </div>
         </div>
 
         <!-- 元数据栏 -->

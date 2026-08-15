@@ -865,6 +865,301 @@ function filterByTag(tag) {
     });
     applyFiltersAndClose();
 }
+// ============================================================
+// ===== TTS 流式播放（边生成边播放） =====
+// ============================================================
+let ttsState = {
+    queue: [],
+    currentIndex: 0,
+    isPlaying: false,
+    isGenerating: false,
+    abortController: null,
+    audioElement: null,
+};
+
+function getCurrentText() {
+    const contentDiv = document.getElementById('markdown-content');
+    return contentDiv ? contentDiv.textContent || '' : '';
+}
+
+function toggleTTSPlayback() {
+    console.log('🔊 toggleTTSPlayback 被调用');
+    const btn = document.getElementById('ttsPlayBtn');
+    if (!btn) {
+        console.error('❌ ttsPlayBtn 未找到');
+        return;
+    }
+    const label = btn.textContent;
+    console.log('按钮当前文字:', label);
+
+    if (ttsState.isGenerating) {
+        stopTTS();
+        return;
+    }
+    if (ttsState.queue.length > 0 && !ttsState.isPlaying) {
+        // 如果有队列且未播放，直接开始播放
+        playNextInQueue();
+        return;
+    }
+    startTTS();
+}
+
+function startTTS() {
+    console.log('🚀 startTTS 开始');
+    const text = getCurrentText();
+    if (!text || text.trim().length === 0) {
+        alert('当前章节没有可朗读的文本');
+        return;
+    }
+    console.log('文本长度:', text.length);
+
+    stopTTS(true);
+
+    ttsState.queue = [];
+    ttsState.currentIndex = 0;
+    ttsState.isPlaying = false;
+    ttsState.isGenerating = true;
+
+    const btn = document.getElementById('ttsPlayBtn');
+    if (btn) {
+        btn.textContent = '⏹';
+        btn.title = '停止生成';
+    }
+
+    ttsState.abortController = new AbortController();
+
+    fetch('/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: text }),
+        signal: ttsState.abortController.signal,
+    })
+        .then(async (response) => {
+            if (!response.ok) throw new Error(`服务器响应错误: ${response.status}`);
+            console.log('✅ SSE 连接已建立');
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder('utf-8');
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) {
+                    console.log('📡 SSE 流自然结束');
+                    break;
+                }
+                const chunk = decoder.decode(value, { stream: true });
+                buffer += chunk;
+
+                const parts = buffer.split('\n\n');
+                buffer = parts.pop() || '';
+
+                for (const part of parts) {
+                    if (!part.trim()) continue;
+                    const lines = part.split('\n');
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            const jsonStr = line.substring(6);
+                            try {
+                                const data = JSON.parse(jsonStr);
+                                console.log('📦 解析数据:', data);
+
+                                if (data.done) {
+                                    console.log('✅ 生成完成');
+                                    ttsState.isGenerating = false;
+                                    const btn = document.getElementById('ttsPlayBtn');
+                                    if (btn) {
+                                        btn.textContent = ttsState.queue.length > 0 ? '⏸️' : '🔊';
+                                    }
+                                    // 如果队列有内容且未播放，开始播放
+                                    if (ttsState.queue.length > 0 && !ttsState.isPlaying) {
+                                        playNextInQueue();
+                                    }
+                                } else if (data.error) {
+                                    console.error('❌ 服务器错误:', data.error);
+                                    alert('生成语音失败: ' + data.error);
+                                    ttsState.isGenerating = false;
+                                    const btn = document.getElementById('ttsPlayBtn');
+                                    if (btn) btn.textContent = '🔊';
+                                } else if (data.url) {
+                                    console.log('🎵 收到音频 URL:', data.url);
+                                    // ★★★ 入队 ★★★
+                                    ttsState.queue.push(data.url);
+                                    // ★★★ 如果当前没有播放，立即开始播放 ★★★
+                                    if (!ttsState.isPlaying) {
+                                        console.log('▶️ 触发播放（队列长度:', ttsState.queue.length, '）');
+                                        playNextInQueue();
+                                    } else {
+                                        console.log('⏳ 当前正在播放，加入队列等待');
+                                    }
+                                }
+                            } catch (e) {
+                                console.warn('⚠️ 解析 JSON 失败:', jsonStr, e);
+                            }
+                        }
+                    }
+                }
+            }
+
+            ttsState.isGenerating = false;
+            const btn = document.getElementById('ttsPlayBtn');
+            if (btn && ttsState.queue.length === 0) {
+                btn.textContent = '🔊';
+            }
+        })
+        .catch((err) => {
+            if (err.name === 'AbortError') {
+                console.log('⏹ 请求已被用户取消');
+                return;
+            }
+            console.error('❌ TTS 请求失败:', err);
+            alert('请求失败: ' + err.message);
+            ttsState.isGenerating = false;
+            const btn = document.getElementById('ttsPlayBtn');
+            if (btn) btn.textContent = '🔊';
+        });
+}
+
+// ★★★ 播放队列中的下一段（使用 fetch 下载再播放） ★★★
+let retryCount = {};
+
+function playNextInQueue() {
+    if (ttsState.queue.length === 0) {
+        console.log('✅ 队列为空，停止播放');
+        ttsState.isPlaying = false;
+        const btn = document.getElementById('ttsPlayBtn');
+        if (btn) btn.textContent = '🔊';
+        return;
+    }
+    if (ttsState.isPlaying) {
+        console.log('⏳ 正在播放，不重复调用');
+        return;
+    }
+
+    const url = ttsState.queue[0];
+    console.log(`🎶 播放下一段: ${url}`);
+    ttsState.isPlaying = true;
+
+    // 清除旧的 audio 元素
+    if (ttsState.audioElement) {
+        ttsState.audioElement.pause();
+        ttsState.audioElement.src = '';
+        ttsState.audioElement = null;
+    }
+
+    // 使用 fetch 获取音频数据
+    fetch(url, { cache: 'no-store' })
+        .then(response => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            console.log('📥 音频数据下载成功');
+            return response.arrayBuffer();
+        })
+        .then(arrayBuffer => {
+            const blob = new Blob([arrayBuffer], { type: 'audio/wav' });
+            const blobUrl = URL.createObjectURL(blob);
+            const audio = new Audio(blobUrl);
+            ttsState.audioElement = audio;
+
+            audio.onended = function() {
+                console.log('✅ 段落播放完成');
+                URL.revokeObjectURL(blobUrl);
+                // 从队列头部移除已播放的 URL
+                ttsState.queue.shift();
+                ttsState.isPlaying = false;
+                if (ttsState.queue.length > 0) {
+                    playNextInQueue();
+                } else {
+                    const btn = document.getElementById('ttsPlayBtn');
+                    if (btn) btn.textContent = '🔊';
+                }
+            };
+
+            audio.onerror = function(e) {
+                console.warn('⚠️ 播放错误:', e);
+                URL.revokeObjectURL(blobUrl);
+                // 尝试重试（通过原始 URL）
+                retryPlay(url);
+            };
+
+            audio.play().then(() => {
+                console.log('✅ 播放已开始');
+                const btn = document.getElementById('ttsPlayBtn');
+                if (btn) btn.textContent = '⏸️';
+            }).catch(err => {
+                console.warn('⚠️ play() 失败:', err);
+                retryPlay(url);
+            });
+        })
+        .catch(err => {
+            console.warn('⚠️ fetch 音频失败:', err);
+            retryPlay(url);
+        });
+}
+
+// 重试播放函数（使用原始 URL）
+function retryPlay(url, maxRetries = 3) {
+    if (!retryCount[url]) retryCount[url] = 0;
+    retryCount[url]++;
+    if (retryCount[url] > maxRetries) {
+        console.warn(`❌ 重试 ${maxRetries} 次后仍失败，跳过当前段`);
+        // 从队列头部移除该 URL
+        ttsState.queue.shift();
+        ttsState.isPlaying = false;
+        if (ttsState.queue.length > 0) {
+            playNextInQueue();
+        } else {
+            const btn = document.getElementById('ttsPlayBtn');
+            if (btn) btn.textContent = '🔊';
+        }
+        return;
+    }
+    console.log(`🔄 重试播放 (${retryCount[url]}/${maxRetries})`);
+    // 延迟后重新尝试播放该段
+    setTimeout(() => {
+        if (!ttsState.isPlaying && ttsState.queue.length > 0 && ttsState.queue[0] === url) {
+            playNextInQueue();
+        }
+    }, 500);
+}
+
+function pauseTTS() {
+    if (ttsState.audioElement && !ttsState.audioElement.paused) {
+        ttsState.audioElement.pause();
+        ttsState.isPlaying = false;
+        const btn = document.getElementById('ttsPlayBtn');
+        if (btn) {
+            btn.textContent = '▶️';
+            btn.title = '继续朗读';
+        }
+        console.log('⏸️ 已暂停');
+    }
+}
+
+function stopTTS(silent = false) {
+    console.log('⏹ stopTTS 被调用');
+    if (ttsState.abortController) {
+        ttsState.abortController.abort();
+        ttsState.abortController = null;
+    }
+    if (ttsState.audioElement) {
+        ttsState.audioElement.pause();
+        ttsState.audioElement.src = '';
+        ttsState.audioElement = null;
+    }
+    ttsState.isGenerating = false;
+    ttsState.isPlaying = false;
+    ttsState.queue = [];
+    retryCount = {};
+    const btn = document.getElementById('ttsPlayBtn');
+    if (btn) {
+        btn.textContent = '🔊';
+        btn.title = '朗读本章';
+    }
+}
+
+function toggleTTS() {
+    toggleTTSPlayback();
+}
 
 // ---------- 初始化 ----------
 initFilterUI();
