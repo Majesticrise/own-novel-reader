@@ -115,6 +115,30 @@ function toggleFolder(element) {
     }
 }
 
+// ---------- 展开文件路径的所有父文件夹 ----------
+function ensureParentFoldersExpanded(filePath) {
+    const parts = filePath.split('/');
+    // 只取目录部分（去掉文件名）
+    const dirs = parts.slice(0, -1);
+    let currentPath = '';
+    for (let i = 0; i < dirs.length; i++) {
+        currentPath = i === 0 ? dirs[i] : currentPath + '/' + dirs[i];
+        // 查找对应路径的文件夹 DOM 节点
+        const folderEl = document.querySelector(`.folder[data-path="${currentPath}"]`);
+        if (!folderEl) continue;
+        const targetId = folderEl.dataset.target;
+        if (!targetId) continue;
+        const container = document.getElementById(targetId);
+        if (!container) continue;
+        // 检查是否折叠（display 为 none）
+        const isHidden = container.style.display === 'none' || getComputedStyle(container).display === 'none';
+        if (isHidden) {
+            // 展开它（自动更新 expandedFolders 并保存）
+            toggleFolder(folderEl);
+        }
+    }
+}
+
 // ---------- 构建目录映射 ----------
 function buildDirMap() {
     const dirMap = {};
@@ -561,6 +585,8 @@ function loadFile(path, element) {
 
     document.querySelectorAll('.file-item').forEach(el => el.classList.remove('selected'));
     if (element) element.classList.add('selected');
+
+    ensureParentFoldersExpanded(path);
 
     currentFile = path;
     document.getElementById('file-title').textContent = '📖 ' + path;
