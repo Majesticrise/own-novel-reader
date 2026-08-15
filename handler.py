@@ -205,7 +205,7 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
                     'url': audio_url,
                     'index': idx,
                     'total': total,
-                    'sentence': sentence[:30] + ('...' if len(sentence) > 30 else '')
+                    'sentence': sentence   # 推送完整句子，不再截断
                 })
                 self.wfile.write(f"data: {event_data}\n\n".encode())
                 self.wfile.flush()

@@ -885,36 +885,36 @@ function getCurrentText() {
 
 // 高亮指定索引的句子
 function highlightSentence(sentenceText) {
-    // 清除之前的高亮
     clearHighlight();
     if (!sentenceText) return;
 
     const contentDiv = document.getElementById('markdown-content');
     if (!contentDiv) return;
 
-    // 获取纯文本内容
-    const fullText = contentDiv.textContent;
-    // 尝试精确匹配
+    // 获取全文纯文本
+    let fullText = contentDiv.textContent;
+
+    // 尝试多种匹配方式
     let start = fullText.indexOf(sentenceText);
     if (start === -1) {
-        // 尝试去除首尾空白
+        // 去除首尾空白
         const trimmed = sentenceText.trim();
         if (trimmed !== sentenceText) {
             start = fullText.indexOf(trimmed);
-            if (start !== -1) {
-                sentenceText = trimmed;
-            }
+            if (start !== -1) sentenceText = trimmed;
         }
-        // 如果还找不到，尝试去除换行符（跨行匹配）
-        if (start === -1) {
-            const noNewline = sentenceText.replace(/\s+/g, ' ');
-            const fullNoNewline = fullText.replace(/\s+/g, ' ');
-            start = fullNoNewline.indexOf(noNewline);
-            if (start !== -1) {
-                // 无法精准定位，直接返回（或使用近似匹配）
-                console.warn('⚠️ 无法精确高亮，近似匹配可能不准确');
-                return;
-            }
+    }
+    if (start === -1) {
+        // 去除所有空白字符（包括换行）进行匹配
+        const noSpaceText = sentenceText.replace(/\s+/g, ' ');
+        const noSpaceFull = fullText.replace(/\s+/g, ' ');
+        start = noSpaceFull.indexOf(noSpaceText);
+        if (start !== -1) {
+            // 近似匹配，可能不精准，但可以尝试高亮
+            console.warn('⚠️ 使用近似匹配高亮');
+            // 但无法精确定位，放弃或使用更复杂的算法
+            // 简单处理：直接返回，不进行高亮
+            return;
         }
     }
     if (start === -1) {
@@ -938,7 +938,6 @@ function highlightSentence(sentenceText) {
         if (start >= charIndex && start < nextCharIndex) {
             const offset = start - charIndex;
             const end = Math.min(offset + len, nodeText.length);
-            // 截取片段
             const range = document.createRange();
             range.setStart(node, offset);
             range.setEnd(node, end);
