@@ -76,29 +76,6 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(state).encode())
             return
 
-        # ★★★ 处理 .wav 文件请求（显式返回二进制数据）★★★
-        if path.endswith('.wav'):
-            rel_path = urllib.parse.unquote(path.lstrip('/'))
-            if os.path.exists(rel_path):
-                try:
-                    with open(rel_path, 'rb') as f:
-                        content = f.read()
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'audio/wav')
-                    self.send_header('Content-Length', str(len(content)))
-                    self.send_header('Cache-Control', 'no-cache')
-                    self.end_headers()
-                    self.wfile.write(content)
-                except Exception as e:
-                    self.send_response(500)
-                    self.end_headers()
-                    self.wfile.write(str(e).encode())
-                return
-            else:
-                self.send_response(404)
-                self.end_headers()
-                return
-
         if path.endswith('.md') or path.endswith('.markdown'):
             rel_path = urllib.parse.unquote(path.lstrip('/'))
             if os.path.exists(rel_path):
@@ -147,7 +124,6 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
 
     def handle_tts_stream(self):
-        """同步生成每个句子并立即推送 SSE 事件（支持 Base64 直传）"""
         try:
             content_length = int(self.headers.get('Content-Length', 0))
             post_data = self.rfile.read(content_length)
@@ -157,7 +133,6 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
             if not text:
                 raise ValueError('Text cannot be empty')
 
-            # 设置 SSE 响应头
             self.send_response(200)
             self.send_header('Content-Type', 'text/event-stream')
             self.send_header('Cache-Control', 'no-cache')
@@ -166,29 +141,26 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('X-Accel-Buffering', 'no')
             self.end_headers()
 
-            # 过滤元数据行
+            # 过滤元数据
             lines = text.splitlines()
             filtered_lines = []
             for line in lines:
                 stripped = line.strip()
-                if re.match(r'^-\s*作者\s*[:：]', stripped):
-                    continue
-                if re.match(r'^-\s*标签\s*[:：]', stripped):
-                    continue
-                if re.match(r'^-\s*Author\s*[:：]', stripped):
-                    continue
-                if re.match(r'^-\s*Tags\s*[:：]', stripped):
-                    continue
+                if re.match(r'^-\s*作者\s*[:：]', stripped): continue
+                if re.match(r'^-\s*标签\s*[:：]', stripped): continue
+                if re.match(r'^-\s*Author\s*[:：]', stripped): continue
+                if re.match(r'^-\s*Tags\s*[:：]', stripped): continue
                 filtered_lines.append(line)
             filtered_text = '\n'.join(filtered_lines)
-            sentences = re.split(r'(?<=[。！？\n])', filtered_text)
+            
+            import re as re_module
+            sentences = re_module.split(r'(?<=[。！？\n])', filtered_text)
             sentences = [s.strip() for s in sentences if s.strip()]
             total = len(sentences)
             if total == 0:
                 self.wfile.write(b'data: {}\n\n')
                 return
 
-            os.makedirs(TTS_OUTPUT_DIR, exist_ok=True)
             tts = get_tts_engine()
             if tts is None:
                 self.wfile.write(b'data: {"error": "TTS engine not loaded"}\n\n')
@@ -197,21 +169,12 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
             for idx, sentence in enumerate(sentences):
                 if not sentence:
                     continue
-                filename = f"tts_{int(time.time())}_{uuid.uuid4().hex[:6]}.wav"
-                output_path = os.path.join(TTS_OUTPUT_DIR, filename)
 
                 try:
                     audio = tts.generate(sentence, sid=0, speed=1.0)
                     
-                    # 1. 写文件（保留原有功能）
-                    sf.write(output_path, audio.samples, audio.sample_rate)
-                    with open(output_path, 'rb') as f:
-                        f.read()
-                    time.sleep(0.05)  # 轻微等待确保磁盘同步
-
-                    # 2. ★ 生成 Base64 直传数据（新增）
-                    import io
-                    import base64
+                    # ★ 直接转内存 Base64，不写磁盘 ★
+                    import io, base64
                     buf = io.BytesIO()
                     sf.write(buf, audio.samples, audio.sample_rate, format='wav')
                     wav_bytes = buf.getvalue()
@@ -221,14 +184,9 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
                     print(f"TTS generation failed: {sentence[:20]}..., error: {e}")
                     continue
 
-                if not os.path.exists(output_path) or os.path.getsize(output_path) == 0:
-                    continue
-
-                audio_url = TTS_OUTPUT_URL_PREFIX + filename
-                # ★ 推送时包含 url 和 b64（同时提供，前端可自由选择）
+                # 只推送 b64，不再推送 url
                 event_data = json.dumps({
-                    'url': audio_url,
-                    'b64': b64_data,           # ★ 新增字段
+                    'b64': b64_data,
                     'index': idx,
                     'total': total,
                     'sentence': sentence
@@ -236,10 +194,6 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(f"data: {event_data}\n\n".encode())
                 self.wfile.flush()
 
-                # 定时清理文件（180秒后删除）
-                threading.Timer(180, self._cleanup_tts_file, args=[output_path]).start()
-
-            # 发送完成标记
             self.wfile.write(b'data: {"done": true}\n\n')
             self.wfile.flush()
 

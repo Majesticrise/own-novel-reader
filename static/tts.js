@@ -1,27 +1,24 @@
 // ============================================================
-// ===== TTS 流式播放（Web Audio API 版） =====
+// ===== TTS 流式播放（纯 B64 内存直传 + Web Audio API） =====
 // ============================================================
+
 let ttsState = {
-    queue: [],
-    currentIndex: 0,
+    queue: [],                // 存储 { arrayBuffer, index, sentence }
     isPlaying: false,
     isGenerating: false,
     abortController: null,
-    audioContext: null,          // 替换 audioElement
-    currentSource: null,         // 当前播放的 AudioBufferSourceNode
-    currentBuffer: null,         // 当前播放的 AudioBuffer
-    sentences: [],
-    preloadedAudioBuffer: null,
-    preloadedAudioUrl: null,
+    audioContext: null,
+    currentSource: null,
 };
 let activePlayPromise = null;
-let retryCount = {};
 
+// ---------- 获取当前文章纯文本 ----------
 function getCurrentText() {
     const contentDiv = document.getElementById('markdown-content');
     return contentDiv ? contentDiv.textContent || '' : '';
 }
 
+// ---------- 高亮当前句子 ----------
 function highlightSentence(sentenceText) {
     clearHighlight();
     if (!sentenceText) return;
@@ -81,6 +78,7 @@ function highlightSentence(sentenceText) {
     }
 }
 
+// ---------- 清除高亮 ----------
 function clearHighlight() {
     const highlights = document.querySelectorAll('.tts-highlight');
     highlights.forEach(span => {
@@ -90,6 +88,7 @@ function clearHighlight() {
     });
 }
 
+// ---------- 播放/暂停切换 ----------
 function toggleTTSPlayback() {
     const btn = document.getElementById('ttsPlayBtn');
     if (!btn) return;
@@ -105,10 +104,11 @@ function toggleTTSPlayback() {
     startTTS();
 }
 
+// ---------- 开始生成和播放 ----------
 function startTTS() {
     let text = getCurrentText();
 
-    // 过滤元数据行
+    // 过滤元数据行（作者、标签等）
     const lines = text.split('\n');
     const filteredLines = lines.filter(line => {
         const trimmed = line.trim();
@@ -130,7 +130,6 @@ function startTTS() {
     stopTTS(true);
 
     ttsState.queue = [];
-    ttsState.currentIndex = 0;
     ttsState.isPlaying = false;
     ttsState.isGenerating = true;
 
@@ -148,85 +147,59 @@ function startTTS() {
         body: JSON.stringify({ text: text }),
         signal: ttsState.abortController.signal,
     })
-        .then(async (response) => {
-            if (!response.ok) throw new Error(`服务器响应错误: ${response.status}`);
-            const reader = response.body.getReader();
-            const decoder = new TextDecoder('utf-8');
-            let buffer = '';
+    .then(async (response) => {
+        if (!response.ok) throw new Error(`服务器响应错误: ${response.status}`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
 
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                const chunk = decoder.decode(value, { stream: true });
-                buffer += chunk;
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            const chunk = decoder.decode(value, { stream: true });
+            buffer += chunk;
 
-                const parts = buffer.split('\n\n');
-                buffer = parts.pop() || '';
+            const parts = buffer.split('\n\n');
+            buffer = parts.pop() || '';
 
-                for (const part of parts) {
-                    if (!part.trim()) continue;
-                    const lines = part.split('\n');
-                    for (const line of lines) {
-                        if (line.startsWith('data: ')) {
-                            const jsonStr = line.substring(6);
-                            try {
-                                const data = JSON.parse(jsonStr);
+            for (const part of parts) {
+                if (!part.trim()) continue;
+                const lines = part.split('\n');
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const jsonStr = line.substring(6);
+                        try {
+                            const data = JSON.parse(jsonStr);
 
-                                if (data.done) {
-                                    ttsState.isGenerating = false;
-                                    const btn = document.getElementById('ttsPlayBtn');
-                                    if (btn) {
-                                        btn.textContent = ttsState.queue.length > 0 ? '⏸️' : '🔊';
+                            if (data.done) {
+                                ttsState.isGenerating = false;
+                                const btn = document.getElementById('ttsPlayBtn');
+                                if (btn) {
+                                    btn.textContent = ttsState.queue.length > 0 ? '⏸️' : '🔊';
+                                }
+                                if (ttsState.queue.length > 0 && !ttsState.isPlaying) {
+                                    playNextInQueue();
+                                }
+                            } else if (data.error) {
+                                console.error('❌ 服务器错误:', data.error);
+                                alert('生成语音失败: ' + data.error);
+                                ttsState.isGenerating = false;
+                                const btn = document.getElementById('ttsPlayBtn');
+                                if (btn) btn.textContent = '🔊';
+                            } else if (data.b64) {
+                                // ★ 纯 B64 直传（无 URL 降级） ★
+                                try {
+                                    const binaryString = atob(data.b64);
+                                    const bytes = new Uint8Array(binaryString.length);
+                                    for (let i = 0; i < binaryString.length; i++) {
+                                        bytes[i] = binaryString.charCodeAt(i);
                                     }
-                                    if (ttsState.queue.length > 0 && !ttsState.isPlaying) {
-                                        playNextInQueue();
-                                    }
-                                } else if (data.error) {
-                                    console.error('❌ 服务器错误:', data.error);
-                                    alert('生成语音失败: ' + data.error);
-                                    ttsState.isGenerating = false;
-                                    const btn = document.getElementById('ttsPlayBtn');
-                                    if (btn) btn.textContent = '🔊';
-                                } else if (data.b64) {
-                                    try {
-                                        const binaryString = atob(data.b64);
-                                        const bytes = new Uint8Array(binaryString.length);
-                                        for (let i = 0; i < binaryString.length; i++) {
-                                            bytes[i] = binaryString.charCodeAt(i);
-                                        }
-                                        const arrayBuffer = bytes.buffer;
-                                        const exists = ttsState.queue.some(item => item.arrayBuffer === arrayBuffer);
-                                        if (!exists) {
-                                            ttsState.queue.push({
-                                                arrayBuffer: arrayBuffer,
-                                                index: data.index,
-                                                sentence: data.sentence
-                                            });
-                                            if (!ttsState.isPlaying && !activePlayPromise) {
-                                                playNextInQueue();
-                                            }
-                                        }
-                                    } catch (e) {
-                                        console.warn('⚠️ Base64 解码失败，降级到 URL 方式:', e);
-                                        if (data.url) {
-                                            const exists = ttsState.queue.some(item => item.url === data.url);
-                                            if (!exists) {
-                                                ttsState.queue.push({
-                                                    url: data.url,
-                                                    index: data.index,
-                                                    sentence: data.sentence
-                                                });
-                                                if (!ttsState.isPlaying && !activePlayPromise) {
-                                                    playNextInQueue();
-                                                }
-                                            }
-                                        }
-                                    }
-                                } else if (data.url) {
-                                    const exists = ttsState.queue.some(item => item.url === data.url);
+                                    const arrayBuffer = bytes.buffer;
+                                    // 入队（去重可选）
+                                    const exists = ttsState.queue.some(item => item.arrayBuffer === arrayBuffer);
                                     if (!exists) {
                                         ttsState.queue.push({
-                                            url: data.url,
+                                            arrayBuffer: arrayBuffer,
                                             index: data.index,
                                             sentence: data.sentence
                                         });
@@ -234,37 +207,40 @@ function startTTS() {
                                             playNextInQueue();
                                         }
                                     }
+                                } catch (e) {
+                                    console.warn('⚠️ Base64 解码失败:', e);
                                 }
-                            } catch (e) {
-                                console.warn('⚠️ 解析 JSON 失败:', jsonStr, e);
                             }
+                        } catch (e) {
+                            console.warn('⚠️ 解析 JSON 失败:', jsonStr, e);
                         }
                     }
                 }
             }
+        }
 
-            ttsState.isGenerating = false;
-            const btn = document.getElementById('ttsPlayBtn');
-            if (btn && ttsState.queue.length === 0) {
-                btn.textContent = '🔊';
-            }
-        })
-        .catch((err) => {
-            if (err.name === 'AbortError') {
-                console.log('⏹ 请求已被用户取消');
-                return;
-            }
-            console.error('❌ TTS 请求失败:', err);
-            alert('请求失败: ' + err.message);
-            ttsState.isGenerating = false;
-            const btn = document.getElementById('ttsPlayBtn');
-            if (btn) btn.textContent = '🔊';
-        });
+        ttsState.isGenerating = false;
+        const btn = document.getElementById('ttsPlayBtn');
+        if (btn && ttsState.queue.length === 0) {
+            btn.textContent = '🔊';
+        }
+    })
+    .catch((err) => {
+        if (err.name === 'AbortError') {
+            console.log('⏹ 请求已被用户取消');
+            return;
+        }
+        console.error('❌ TTS 请求失败:', err);
+        alert('请求失败: ' + err.message);
+        ttsState.isGenerating = false;
+        const btn = document.getElementById('ttsPlayBtn');
+        if (btn) btn.textContent = '🔊';
+    });
 }
 
-// ★★★ 核心：使用 Web Audio API 播放 ★★★
+// ---------- 播放队列中的下一段（Web Audio API） ----------
 function playNextInQueue() {
-    if (activePlayPromise) {
+    if (activePlayPromise || ttsState.isPlaying) {
         console.log('⏳ 已有播放任务进行中，跳过');
         return;
     }
@@ -277,88 +253,52 @@ function playNextInQueue() {
         activePlayPromise = null;
         return;
     }
-    if (ttsState.isPlaying) {
-        console.log('⏳ 正在播放，忽略重复调用');
-        return;
-    }
 
     const item = ttsState.queue[0];
-    const url = item.url;
-    const index = item.index;
     const sentence = item.sentence;
     ttsState.isPlaying = true;
 
-    // 清除当前播放的 source
+    // 清除旧的 source
     if (ttsState.currentSource) {
         try { ttsState.currentSource.stop(); } catch (e) {}
         ttsState.currentSource = null;
-        ttsState.currentBuffer = null;
     }
 
     highlightSentence(sentence);
 
-    const getArrayBuffer = () => {
-        if (item.arrayBuffer) {
-            const buf = item.arrayBuffer;
-            item.arrayBuffer = null;
-            return Promise.resolve(buf);
-        }
-        if (ttsState.preloadedAudioUrl === url && ttsState.preloadedAudioBuffer) {
-            const buf = ttsState.preloadedAudioBuffer;
-            ttsState.preloadedAudioBuffer = null;
-            ttsState.preloadedAudioUrl = null;
-            return Promise.resolve(buf);
-        }
-        return fetch(url, { cache: 'no-store' }).then(response => {
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
-            return response.arrayBuffer();
-        });
-    };
-
-    activePlayPromise = getArrayBuffer()
-        .then(arrayBuffer => {
-            // 创建 AudioContext（懒加载，恢复时重新创建）
+    // 直接使用 item.arrayBuffer，无网络请求
+    const arrayBuffer = item.arrayBuffer;
+    activePlayPromise = Promise.resolve(arrayBuffer)
+        .then(buf => {
             if (!ttsState.audioContext || ttsState.audioContext.state === 'closed') {
                 ttsState.audioContext = new (window.AudioContext || window.webkitAudioContext)();
             }
             const ctx = ttsState.audioContext;
-            // 如果 context 是 suspended，需要恢复（用户交互后自动恢复，这里确保）
             if (ctx.state === 'suspended') {
-                return ctx.resume().then(() => ctx.decodeAudioData(arrayBuffer));
+                return ctx.resume().then(() => ctx.decodeAudioData(buf));
             }
-            return ctx.decodeAudioData(arrayBuffer);
+            return ctx.decodeAudioData(buf);
         })
         .then(audioBuffer => {
-            if (ttsState.currentSource) {
-                try { ttsState.currentSource.stop(); } catch (e) {}
-                ttsState.currentSource = null;
-            }
-            ttsState.currentBuffer = audioBuffer;
-
             const source = ttsState.audioContext.createBufferSource();
             source.buffer = audioBuffer;
-            // 应用速度
             const speedSlider = document.getElementById('ttsSpeed');
             const speed = parseFloat(speedSlider ? speedSlider.value : 1.0) || 1.0;
             source.playbackRate.value = speed;
-
             source.connect(ttsState.audioContext.destination);
             ttsState.currentSource = source;
 
-            // 播放结束处理
             source.onended = function() {
-                if (ttsState.currentSource !== source) return; // 防止过期事件
-                // 播放完成后，从队列移除当前项
-                if (ttsState.queue.length > 0 && ttsState.queue[0].url === url) {
+                if (ttsState.currentSource !== source) return;
+                // 从队列移除当前项
+                if (ttsState.queue.length > 0) {
                     ttsState.queue.shift();
                 }
                 ttsState.isPlaying = false;
                 clearHighlight();
                 activePlayPromise = null;
                 ttsState.currentSource = null;
-                ttsState.currentBuffer = null;
 
-                // 检查是否有更多句子
                 if (ttsState.queue.length > 0 && !ttsState.isPlaying) {
                     playNextInQueue();
                 } else {
@@ -367,64 +307,28 @@ function playNextInQueue() {
                 }
             };
 
-            // 开始播放
             source.start(0);
             const btn = document.getElementById('ttsPlayBtn');
             if (btn) btn.textContent = '⏸️';
-
-            // 预加载下一段（可选）
-            try {
-                if (ttsState.queue.length > 1) {
-                    const nextItem = ttsState.queue[1];
-                    if (nextItem && nextItem.url && ttsState.preloadedAudioUrl !== nextItem.url) {
-                        fetch(nextItem.url, { cache: 'no-store' })
-                            .then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
-                            .then(buf => {
-                                ttsState.preloadedAudioBuffer = buf;
-                                ttsState.preloadedAudioUrl = nextItem.url;
-                            })
-                            .catch(() => {});
-                    }
-                }
-            } catch (e) {}
         })
         .catch(err => {
-            console.warn('⚠️ 音频加载或解码失败:', err);
+            console.warn('⚠️ 播放失败:', err);
             ttsState.isPlaying = false;
             activePlayPromise = null;
-            retryPlay(url, index);
+            // 跳过当前段，播下一段
+            if (ttsState.queue.length > 0) {
+                ttsState.queue.shift();
+            }
+            if (ttsState.queue.length > 0 && !ttsState.isPlaying) {
+                playNextInQueue();
+            } else {
+                const btn = document.getElementById('ttsPlayBtn');
+                if (btn) btn.textContent = '🔊';
+            }
         });
 }
 
-function retryPlay(url, index, maxRetries = 3) {
-    if (ttsState.queue.length === 0) return;
-    if (ttsState.isPlaying) return;
-    if (activePlayPromise) return;
-
-    if (!retryCount[url]) retryCount[url] = 0;
-    retryCount[url]++;
-    if (retryCount[url] > maxRetries) {
-        console.warn(`❌ 重试 ${maxRetries} 次后仍失败，跳过当前段`);
-        if (ttsState.queue.length > 0 && ttsState.queue[0].url === url) {
-            ttsState.queue.shift();
-        }
-        clearHighlight();
-        if (ttsState.queue.length > 0 && !ttsState.isPlaying) {
-            playNextInQueue();
-        } else {
-            const btn = document.getElementById('ttsPlayBtn');
-            if (btn) btn.textContent = '🔊';
-        }
-        return;
-    }
-    console.log(`🔄 重试播放 (${retryCount[url]}/${maxRetries})`);
-    setTimeout(() => {
-        if (ttsState.queue.length > 0 && ttsState.queue[0].url === url && !ttsState.isPlaying && !activePlayPromise) {
-            playNextInQueue();
-        }
-    }, 500);
-}
-
+// ---------- 暂停 ----------
 function pauseTTS() {
     if (ttsState.audioContext && ttsState.audioContext.state === 'running') {
         ttsState.audioContext.suspend();
@@ -438,6 +342,7 @@ function pauseTTS() {
     }
 }
 
+// ---------- 停止 ----------
 function stopTTS(silent = false) {
     if (ttsState.abortController) {
         ttsState.abortController.abort();
@@ -446,7 +351,6 @@ function stopTTS(silent = false) {
     if (ttsState.currentSource) {
         try { ttsState.currentSource.stop(); } catch (e) {}
         ttsState.currentSource = null;
-        ttsState.currentBuffer = null;
     }
     if (ttsState.audioContext) {
         try { ttsState.audioContext.close(); } catch (e) {}
@@ -455,10 +359,6 @@ function stopTTS(silent = false) {
     ttsState.isGenerating = false;
     ttsState.isPlaying = false;
     ttsState.queue = [];
-    ttsState.sentences = [];
-    ttsState.preloadedAudioBuffer = null;
-    ttsState.preloadedAudioUrl = null;
-    retryCount = {};
     activePlayPromise = null;
     clearHighlight();
     const btn = document.getElementById('ttsPlayBtn');
@@ -472,7 +372,7 @@ function toggleTTS() {
     toggleTTSPlayback();
 }
 
-// 速度滑块控制（同时支持 Web Audio 播放中的实时速度调整）
+// ---------- 速度滑块控制 ----------
 document.addEventListener('DOMContentLoaded', function() {
     const speedSlider = document.getElementById('ttsSpeed');
     const speedLabel = document.getElementById('ttsSpeedLabel');
@@ -481,7 +381,6 @@ document.addEventListener('DOMContentLoaded', function() {
         speedSlider.addEventListener('input', function() {
             const val = parseFloat(this.value).toFixed(1);
             speedLabel.textContent = val + 'x';
-            // 如果当前有播放的 source，实时调整速度
             if (ttsState.currentSource && ttsState.currentSource.playbackRate) {
                 ttsState.currentSource.playbackRate.value = parseFloat(val);
             }
