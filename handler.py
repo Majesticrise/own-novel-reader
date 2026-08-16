@@ -147,7 +147,7 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
 
     def handle_tts_stream(self):
-        """同步生成每个句子并立即推送 SSE 事件，生成完一个就推送一个"""
+        """同步生成每个句子并立即推送 SSE 事件（支持 Base64 直传）"""
         try:
             content_length = int(self.headers.get('Content-Length', 0))
             post_data = self.rfile.read(content_length)
@@ -157,7 +157,7 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
             if not text:
                 raise ValueError('Text cannot be empty')
 
-            # 设置 SSE 响应头（强制关闭连接，避免复用）
+            # 设置 SSE 响应头
             self.send_response(200)
             self.send_header('Content-Type', 'text/event-stream')
             self.send_header('Cache-Control', 'no-cache')
@@ -166,12 +166,11 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
             self.send_header('X-Accel-Buffering', 'no')
             self.end_headers()
 
-            # 过滤元数据行（如 - 作者：xxx，- 标签：xxx 等），然后分割句子
+            # 过滤元数据行
             lines = text.splitlines()
             filtered_lines = []
             for line in lines:
                 stripped = line.strip()
-                # 过滤以 '- 作者' 或 '- 标签' 开头的行（不区分全角半角冒号）
                 if re.match(r'^-\s*作者\s*[:：]', stripped):
                     continue
                 if re.match(r'^-\s*标签\s*[:：]', stripped):
@@ -182,7 +181,6 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
                     continue
                 filtered_lines.append(line)
             filtered_text = '\n'.join(filtered_lines)
-            # 分割句子
             sentences = re.split(r'(?<=[。！？\n])', filtered_text)
             sentences = [s.strip() for s in sentences if s.strip()]
             total = len(sentences)
@@ -204,11 +202,21 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
 
                 try:
                     audio = tts.generate(sentence, sid=0, speed=1.0)
+                    
+                    # 1. 写文件（保留原有功能）
                     sf.write(output_path, audio.samples, audio.sample_rate)
-                    # 强制刷新文件系统缓存（确保文件完全写入）
                     with open(output_path, 'rb') as f:
                         f.read()
-                    time.sleep(0.1)  # 等待磁盘同步
+                    time.sleep(0.05)  # 轻微等待确保磁盘同步
+
+                    # 2. ★ 生成 Base64 直传数据（新增）
+                    import io
+                    import base64
+                    buf = io.BytesIO()
+                    sf.write(buf, audio.samples, audio.sample_rate, format='wav')
+                    wav_bytes = buf.getvalue()
+                    b64_data = base64.b64encode(wav_bytes).decode('ascii')
+
                 except Exception as e:
                     print(f"TTS generation failed: {sentence[:20]}..., error: {e}")
                     continue
@@ -217,11 +225,13 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
                     continue
 
                 audio_url = TTS_OUTPUT_URL_PREFIX + filename
+                # ★ 推送时包含 url 和 b64（同时提供，前端可自由选择）
                 event_data = json.dumps({
                     'url': audio_url,
+                    'b64': b64_data,           # ★ 新增字段
                     'index': idx,
                     'total': total,
-                    'sentence': sentence   # 推送完整句子，不再截断
+                    'sentence': sentence
                 })
                 self.wfile.write(f"data: {event_data}\n\n".encode())
                 self.wfile.flush()
