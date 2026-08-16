@@ -1,6 +1,7 @@
 import webbrowser
 import time
 import socketserver
+from logger import logger
 import threading
 from handler import MyHandler
 from config import PORT, TTS_OUTPUT_DIR, PRELOAD_TTS
@@ -14,14 +15,14 @@ def preload_tts_async():
     """后台预热 TTS 模型"""
     try:
         from handler import get_tts_engine
-        print("后台正在预热 TTS 模型...")
+        logger.info("后台正在预热 TTS 模型...")
         engine = get_tts_engine()
         if engine:
-            print("TTS 模型已加载完毕")
+            logger.info("TTS 模型已加载完毕")
         else:
-            print("TTS 模型加载失败，请检查模型文件配置")
+            logger.error("TTS 模型加载失败，请检查模型文件配置")
     except Exception as e:
-        print(f"预热 TTS 模型时出错: {e}")
+        logger.error(f"预热 TTS 模型时出错: {e}")
 
 if __name__ == '__main__':
     # 清理旧的 TTS 文件（360秒前）

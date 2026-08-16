@@ -1,6 +1,7 @@
 import os
 import json
 import shutil
+from logger import logger
 from config import STATE_FILE
 
 # 最大保留的滚动位置条数
@@ -49,14 +50,14 @@ def save_state(state):
                     # 无法修复，备份并重置
                     backup_file = STATE_FILE + '.bak'
                     shutil.copy2(STATE_FILE, backup_file)
-                    print(f"状态文件无法修复，已备份为 {backup_file}，将重建新文件")
+                    logger.info(f"状态文件无法修复，已备份为 {backup_file}，将重建新文件")
                     existing = {}
             except Exception as e:
                 # 读取时发生其他异常（如权限问题），备份并重置
                 backup_file = STATE_FILE + '.bak'
                 try:
                     shutil.copy2(STATE_FILE, backup_file)
-                    print(f"读取状态文件异常，已备份为 {backup_file}")
+                    logger.info(f"读取状态文件异常，已备份为 {backup_file}")
                 except:
                     pass
                 existing = {}
