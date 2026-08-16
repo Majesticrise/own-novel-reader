@@ -4,6 +4,7 @@
 let ttsState = {
     queue: [],
     currentIndex: 0,
+    startIndex: 0, // 可选从指定句子开始生成/播放
     isPlaying: false,
     isPaused: false,          // ★ 新增暂停标记
     isGenerating: false,
@@ -22,6 +23,169 @@ function getCurrentText() {
     const contentDiv = document.getElementById('markdown-content');
     return contentDiv ? contentDiv.textContent || '' : '';
 }
+
+// 获取与 startTTS 相同的过滤后的正文文本（用于定位选中文本）
+function getFilteredText() {
+    let text = getCurrentText();
+    const lines = text.split('\n');
+    const filteredLines = lines.filter(line => {
+        const trimmed = line.trim();
+        if (/^作者\s*[:：]/.test(trimmed)) return false;
+        if (/^标签\s*[:：]/.test(trimmed)) return false;
+        if (/^Author\s*[:：]/.test(trimmed)) return false;
+        if (/^Tags\s*[:：]/.test(trimmed)) return false;
+        if (/^-\s*作者\s*[:：]/.test(trimmed)) return false;
+        if (/^-\s*标签\s*[:：]/.test(trimmed)) return false;
+        return true;
+    });
+    return filteredLines.join('\n');
+}
+
+// 根据与后端相同规则分句，并返回每句的起始和结束偏移
+function computeSentencesWithOffsets(text) {
+    const parts = text.split(/(?<=[。！？\n])/);
+    const sentences = [];
+    let offset = 0;
+    for (let p of parts) {
+        const s = p.trim();
+        if (!s) {
+            offset += p.length;
+            continue;
+        }
+        const start = text.indexOf(p, offset);
+        const end = start + p.length;
+        sentences.push({ text: s, start: start, end: end });
+        offset = end;
+    }
+    return sentences;
+}
+
+// 将选中文本映射到句子索引（返回 -1 表示未找到）
+// 说明：直接使用 selectedText 在过滤后的文本中查找，避免偏移在过滤前后不一致的问题
+function findSentenceIndexForSelection(selectedText) {
+    if (!selectedText) return -1;
+    const filtered = getFilteredText();
+    const sentences = computeSentencesWithOffsets(filtered);
+    // 优先直接匹配完整选中文本
+    let startPos = filtered.indexOf(selectedText);
+    if (startPos === -1) {
+        // 尝试去除首尾空白后匹配
+        const trimmed = selectedText.trim();
+        if (trimmed !== selectedText) startPos = filtered.indexOf(trimmed);
+    }
+    if (startPos === -1) {
+        // 退而求其次，使用空白折叠的近似匹配
+        const noSpaceSel = selectedText.replace(/\s+/g, ' ').trim();
+        const noSpaceFiltered = filtered.replace(/\s+/g, ' ');
+        const approx = noSpaceFiltered.indexOf(noSpaceSel);
+        if (approx === -1) return -1;
+        startPos = approx;
+    }
+
+    for (let i = 0; i < sentences.length; i++) {
+        if (startPos >= sentences[i].start && startPos < sentences[i].end) return i;
+    }
+    return -1;
+}
+
+// 跳转到指定句子并开始/继续朗读
+function jumpToSentenceByIndex(targetIndex) {
+    const filtered = getFilteredText();
+    const sentences = computeSentencesWithOffsets(filtered);
+    if (targetIndex < 0 || targetIndex >= sentences.length) return;
+    const sentenceText = sentences[targetIndex].text;
+    // 高亮并滚动到视图
+    highlightSentence(sentenceText);
+    // 尝试滚动高亮节点到中间
+    const el = document.querySelector('.tts-highlight');
+    if (el && typeof el.scrollIntoView === 'function') {
+        el.scrollIntoView({ block: 'center' });
+    }
+
+    // 如果 TTS 未启动，仅高亮
+    if (!ttsState.isGenerating && !ttsState.isPlaying && !ttsState.isPaused) {
+        // 记录 startIndex，用户点击播放时从此处开始
+        ttsState.startIndex = targetIndex;
+        const status = document.getElementById('statusBar');
+        if (status) status.textContent = `已选择：开始朗读第 ${targetIndex + 1} 句（点击播放开始）`;
+        return;
+    }
+
+    // 如果已暂停并且当前队列第一项就是目标句，直接继续播放
+    if (ttsState.isPaused && ttsState.queue.length > 0 && typeof ttsState.queue[0].index === 'number' && ttsState.queue[0].index === targetIndex) {
+        resumeTTS();
+        const status = document.getElementById('statusBar');
+        if (status) status.textContent = `已跳转到第 ${targetIndex + 1} 句，继续播放`;
+        return;
+    }
+
+    // 否则停止并重新开始（设置 startIndex）
+    stopTTS(false);
+    ttsState.startIndex = targetIndex;
+    startTTS();
+    const status = document.getElementById('statusBar');
+    if (status) status.textContent = `已跳转并开始朗读第 ${targetIndex + 1} 句`;
+}
+
+// 根据当前 selection 对象尝试计算起始偏移（相对过滤后的文本）
+function getSelectionStartOffset() {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return -1;
+    const range = sel.getRangeAt(0);
+    const contentDiv = document.getElementById('markdown-content');
+    if (!contentDiv) return -1;
+    // 创建 TreeWalker 来计算偏移
+    const walker = document.createTreeWalker(contentDiv, NodeFilter.SHOW_TEXT, null, false);
+    let node;
+    let offset = 0;
+    while (node = walker.nextNode()) {
+        if (node === range.startContainer) {
+            return offset + range.startOffset;
+        }
+        offset += node.textContent.length;
+    }
+    return -1;
+}
+
+// 长按检测：在 #markdown-content 上监听 mousedown/up
+function initLongPressSelection() {
+    let downTime = 0;
+    let downX = 0;
+    let downY = 0;
+    const thresholdMs = 500;
+    const moveThreshold = 5; // px
+    const el = document.getElementById('markdown-content');
+    if (!el) return;
+    el.addEventListener('mousedown', function(e) {
+        // 忽略交互元素
+        const tag = e.target.tagName;
+        if (['A','BUTTON','INPUT','TEXTAREA','SELECT','LABEL'].includes(tag)) return;
+        downTime = Date.now();
+        downX = e.clientX;
+        downY = e.clientY;
+    });
+    el.addEventListener('mouseup', function(e) {
+        const upTime = Date.now();
+        const dt = upTime - downTime;
+        const dx = Math.abs(e.clientX - downX);
+        const dy = Math.abs(e.clientY - downY);
+        // 如果移动距离太小且时间短，视为普通点击
+        if ((dx < moveThreshold && dy < moveThreshold) || dt < thresholdMs) return;
+        const sel = window.getSelection();
+        if (!sel) return;
+        const selectedText = sel.toString().trim();
+        if (!selectedText) return;
+        // 尝试通过文本匹配定位句子（不依赖偏移）
+        const targetIndex = findSentenceIndexForSelection(selectedText);
+        if (targetIndex === -1) return;
+        // 高亮并跳转
+        jumpToSentenceByIndex(targetIndex);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    initLongPressSelection();
+});
 
 function highlightSentence(sentenceText) {
     clearHighlight();
@@ -124,6 +288,8 @@ function toggleTTSPlayback() {
 }
 
 function startTTS() {
+    // 支持可选参数 startIndex（通过 ttsState.startIndex 传递）
+    const startIndex = ttsState.startIndex || 0; // ★ 先保存，防止 stopTTS 重置
     let text = getCurrentText();
 
     const lines = text.split('\n');
@@ -145,6 +311,8 @@ function startTTS() {
     }
 
     stopTTS(true);
+    // 恢复 startIndex（stopTTS 会将其重置为 0）
+    ttsState.startIndex = startIndex;
 
     ttsState.queue = [];
     ttsState.currentIndex = 0;
@@ -217,6 +385,11 @@ function startTTS() {
                                     const btn = document.getElementById('ttsPlayBtn');
                                     if (btn) btn.textContent = '🔊';
                                 } else if (data.b64) {
+                                    // 跳过 startIndex 之前的句子（如果设置了 startIndex）
+                                    if (typeof data.index === 'number' && data.index < startIndex) {
+                                        // 如果是最后一条并且生成已完成，继续处理完成逻辑
+                                        continue;
+                                    }
                                     try {
                                         const binaryString = atob(data.b64);
                                         const bytes = new Uint8Array(binaryString.length);
@@ -560,6 +733,8 @@ function stopTTS(silent = false) {
     ttsState.isGenerating = false;
     ttsState.isPlaying = false;
     ttsState.isPaused = false;
+    // 重置 startIndex
+    ttsState.startIndex = 0;
     ttsState.queue = [];
     ttsState.sentences = [];
     retryCount = {};
