@@ -106,5 +106,5 @@ def get_cached_metadata(force_refresh=False):
         with open(CACHE_FILE, 'w', encoding='utf-8') as f:
             json.dump(all_meta, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f"⚠️ 写入元数据缓存失败: {e}")
+        print(f"写入元数据缓存失败: {e}")
     return all_meta

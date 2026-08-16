@@ -35,9 +35,9 @@ def get_tts_engine():
                 )
             )
             _tts_engine = sherpa_onnx.OfflineTts(config)
-            print("✅ Sherpa-ONNX TTS 引擎加载成功")
+            print("Sherpa-ONNX TTS 引擎加载成功")
         except Exception as e:
-            print(f"❌ Sherpa-ONNX TTS 引擎加载失败: {e}")
+            print(f"Sherpa-ONNX TTS 引擎加载失败: {e}")
             _tts_engine = None
     return _tts_engine
 
@@ -181,7 +181,7 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
                     b64_data = base64.b64encode(wav_bytes).decode('ascii')
 
                 except Exception as e:
-                    print(f"TTS generation failed: {sentence[:20]}..., error: {e}")
+                    print(f"Sherpa-ONNX TTS 生成失败: {sentence[:20]}..., error: {e}")
                     continue
 
                 # 只推送 b64，不再推送 url
@@ -209,7 +209,7 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
         try:
             if os.path.exists(filepath):
                 os.remove(filepath)
-                print(f"🧹 清理 TTS 文件: {os.path.basename(filepath)}")
+                print(f"清理 TTS 文件: {os.path.basename(filepath)}")
         except Exception:
             pass
 
@@ -292,9 +292,9 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
                 with urllib.request.urlopen(req, timeout=10) as response:
                     with open(local_path, 'wb') as f:
                         f.write(response.read())
-                print(f"✅ 下载图片: {url} -> {local_path}")
+                print(f"下载图片: {url} -> {local_path}")
             except Exception as e:
-                print(f"❌ 下载图片失败: {url}, 错误: {e}")
+                print(f"下载图片失败: {url}, 错误: {e}")
                 return f'![{alt}]({url})'
 
         encoded_parts = [urllib.parse.quote(part) for part in [CHAPTERS_DIR, ILLUSTRATION_DIR, filename]]
