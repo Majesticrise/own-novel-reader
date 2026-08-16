@@ -75,6 +75,9 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
 
         if path.endswith('.md') or path.endswith('.markdown'):
             rel_path = urllib.parse.unquote(path.lstrip('/'))
+            abs_path = os.path.abspath(rel_path)
+            if not abs_path.startswith(os.path.abspath(CHAPTERS_DIR)):
+                self.send_response(403); return
             if os.path.exists(rel_path):
                 try:
                     with open(rel_path, 'r', encoding='utf-8') as f:
