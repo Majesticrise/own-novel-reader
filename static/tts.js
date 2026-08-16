@@ -91,23 +91,18 @@ function clearHighlight() {
     });
 }
 
+// ★★★ 核心修改：生成中不再停止，只控制播放/暂停 ★★★
 function toggleTTSPlayback() {
     const btn = document.getElementById('ttsPlayBtn');
     if (!btn) return;
 
-    // 如果正在生成中，点击停止
-    if (ttsState.isGenerating) {
-        stopTTS();
-        return;
-    }
-
-    // 如果处于暂停状态（有音频且已暂停），则继续播放
+    // 如果处于暂停状态，则继续播放
     if (ttsState.isPaused) {
         resumeTTS();
         return;
     }
 
-    // 如果当前正在播放，则暂停
+    // 如果当前正在播放，则暂停（无论是否在生成中）
     if (ttsState.isPlaying) {
         pauseTTS();
         return;
@@ -119,8 +114,13 @@ function toggleTTSPlayback() {
         return;
     }
 
-    // 否则启动 TTS 生成
-    startTTS();
+    // 否则启动 TTS 生成（如果尚未生成）
+    if (!ttsState.isGenerating) {
+        startTTS();
+    } else {
+        // 理论不会到这里，但以防万一
+        console.log('⏳ 生成中，队列为空？等待中...');
+    }
 }
 
 function startTTS() {
@@ -149,7 +149,7 @@ function startTTS() {
     ttsState.queue = [];
     ttsState.currentIndex = 0;
     ttsState.isPlaying = false;
-    ttsState.isPaused = false;   // 重置暂停状态
+    ttsState.isPaused = false;
     ttsState.isGenerating = true;
     // 清空预加载
     if (ttsState.preloadedAudio) {
@@ -231,6 +231,7 @@ function startTTS() {
                                                 index: data.index,
                                                 sentence: data.sentence
                                             });
+                                            // ★ 自动播放条件：未播放且未暂停
                                             if (!ttsState.isPlaying && !ttsState.isPaused && !activePlayPromise) {
                                                 playNextInQueue();
                                             }
@@ -348,7 +349,7 @@ function playNextInQueue() {
     const item = ttsState.queue[0];
     const sentence = item.sentence;
     ttsState.isPlaying = true;
-    ttsState.isPaused = false;   // 确保暂停标记为 false
+    ttsState.isPaused = false;
 
     if (ttsState.audioElement) {
         ttsState.audioElement.pause();
@@ -402,7 +403,7 @@ function playNextInQueue() {
             ttsState.queue.shift();
         }
         ttsState.isPlaying = false;
-        ttsState.isPaused = false;   // 自然结束时清除暂停状态
+        ttsState.isPaused = false;
         clearHighlight();
         activePlayPromise = null;
         ttsState.audioElement = null;
@@ -558,7 +559,7 @@ function stopTTS(silent = false) {
 
     ttsState.isGenerating = false;
     ttsState.isPlaying = false;
-    ttsState.isPaused = false;   // 重置暂停状态
+    ttsState.isPaused = false;
     ttsState.queue = [];
     ttsState.sentences = [];
     retryCount = {};
