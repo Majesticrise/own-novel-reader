@@ -231,7 +231,7 @@ class MyHandler(http.server.SimpleHTTPRequestHandler):
 
         illu_abs_path = '/' + CHAPTERS_DIR + '/' + ILLUSTRATION_DIR + '/'
 
-        template_path = os.path.join(os.path.dirname(__file__), 'templates', 'index.html')
+        template_path = os.path.join(os.path.dirname(__file__), 'static', 'index.html')
         with open(template_path, 'r', encoding='utf-8') as f:
             template = f.read()
 
